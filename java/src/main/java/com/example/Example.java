@@ -10,7 +10,7 @@ public class Example {
     private static final Logger logger = LoggerFactory.getLogger(Example.class);
     
     public static void main(String[] args) throws Exception {
-        PythonServerClient client = new PythonServerClient();
+        PythonServerClient client = new PythonServerClient("ws://localhost:8765");
         
         // Register handler for requests from Python server
         client.registerRequestHandler("get_additional_data", request -> {
@@ -25,8 +25,8 @@ public class Example {
         });
         
         // Connect to Python server
-        client.connect("ws://localhost:8765");
-        Thread.sleep(500);  // Wait for connection
+        client.connectBlocking();
+        client.waitForConnection(5, TimeUnit.SECONDS);
         
         // Example 1: Simple sync task
         logger.info("\n=== Example 1: Local Sync Task ===");
@@ -56,5 +56,6 @@ public class Example {
         logger.info("Result: " + result3);
         
         logger.info("\nAll tasks completed!");
+        client.close();
     }
 }
