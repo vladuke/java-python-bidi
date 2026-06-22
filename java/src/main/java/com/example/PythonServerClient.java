@@ -1,40 +1,41 @@
 package com.example;
 
-import javax.websocket.*;
-import java.net.URI;
-import java.util.concurrent.*;
-import java.util.*;
+import org.java_websocket.WebSocket;
+import org.java_websocket.client.WebSocketClient;
+import org.java_websocket.handshake.ServerHandshake;
 import com.google.gson.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-@ClientEndpoint
-public class PythonServerClient {
+import java.net.URI;
+import java.util.concurrent.*;
+import java.util.*;
+
+public class PythonServerClient extends WebSocketClient {
     private static final Logger logger = LoggerFactory.getLogger(PythonServerClient.class);
     
-    private Session session;
     private final ConcurrentHashMap<String, CompletableFuture<JsonObject>> pendingTasks = 
         new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, RequestHandler> pendingRequests = 
         new ConcurrentHashMap<>();
     private final Gson gson = new Gson();
+    private CompletableFuture<Void> connectionFuture = new CompletableFuture<>();
     
     public interface RequestHandler {
         JsonObject handle(JsonObject request);
     }
     
-    public void connect(String serverUri) throws Exception {
-        WebSocketContainer container = ContainerProvider.getWebSocketContainer();
-        session = container.connectToServer(this, new URI(serverUri));
+    public PythonServerClient(String serverUri) throws Exception {
+        super(new URI(serverUri));
     }
     
-    @OnOpen
-    public void onOpen(Session session) {
-        this.session = session;
+    @Override
+    public void onOpen(ServerHandshake handshakedata) {
         logger.info("Connected to Python server");
+        connectionFuture.complete(null);
     }
     
-    @OnMessage
+    @Override
     public void onMessage(String message) {
         try {
             JsonObject json = JsonParser.parseString(message).getAsJsonObject();
@@ -55,6 +56,23 @@ public class PythonServerClient {
         }
     }
     
+    @Override
+    public void onClose(int code, String reason, boolean remote) {
+        logger.info("Disconnected from Python server: " + reason);
+    }
+    
+    @Override
+    public void onError(Exception ex) {
+        logger.error("WebSocket error", ex);
+    }
+    
+    /**
+     * Wait for connection to be established
+     */
+    public void waitForConnection(long timeout, TimeUnit unit) throws Exception {
+        connectionFuture.get(timeout, unit);
+    }
+    
     /**
      * Start a long-running task on the Python server
      */
@@ -72,7 +90,7 @@ public class PythonServerClient {
         pendingTasks.put(taskId, future);
         
         logger.info("Starting task: " + taskId + " (type: " + taskType + ")");
-        session.getBasicRemote().sendText(request.toString());
+        this.send(request.toString());
         
         return future;
     }
@@ -105,7 +123,7 @@ public class PythonServerClient {
             response.addProperty("request_id", requestId);
             response.add("data", responseData);
             
-            session.getBasicRemote().sendText(response.toString());
+            this.send(response.toString());
             logger.info("Sent response for request: " + requestId);
         } catch (Exception e) {
             logger.error("Error handling request: " + requestId, e);
@@ -114,7 +132,7 @@ public class PythonServerClient {
                 error.addProperty("type", "response");
                 error.addProperty("request_id", requestId);
                 error.addProperty("error", e.getMessage());
-                session.getBasicRemote().sendText(error.toString());
+                this.send(error.toString());
             } catch (Exception sendError) {
                 logger.error("Failed to send error response", sendError);
             }
@@ -141,17 +159,7 @@ public class PythonServerClient {
         }
     }
     
-    @OnError
-    public void onError(Throwable error) {
-        logger.error("WebSocket error", error);
-    }
-    
-    @OnClose
-    public void onClose(Session session) {
-        logger.info("Disconnected from Python server");
-    }
-    
-    public boolean isConnected() {
-        return session != null && session.isOpen();
+    public boolean isOpen() {
+        return super.isOpen();
     }
 }
